@@ -1,0 +1,350 @@
+%\VignetteIndexEntry{Running gene set analyses with the "cpvSNP" package}
+%\VignettePackage{cpvSNP}
+\documentclass[12pt]{article}
+
+
+<<style, eval=TRUE, echo=FALSE, results=tex>>=
+BiocStyle::latex()
+@
+
+
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{Sweave}
+\SweaveOpts{keep.source=TRUE,eps=FALSE,pdf=FALSE,png=TRUE,include=FALSE,width=4,height=4.5,resolution=150}
+\setkeys{Gin}{width=0.5\textwidth}
+
+% use a vertical rule for R output instead of prompts for R input
+\usepackage{fancyvrb}
+\definecolor{darkgray}{gray}{0.2}
+\DefineVerbatimEnvironment{Sinput}{Verbatim}{xleftmargin=1em,formatcom={\color{darkgray}}}
+\DefineVerbatimEnvironment{Soutput}{Verbatim}{xleftmargin=1em,frame=leftline,framerule=.6pt,rulecolor=\color{darkgray},framesep=1em,formatcom={\color{darkgray}}}
+\fvset{listparameters={\setlength{\topsep}{0pt}}}
+\renewenvironment{Schunk}{\vspace{\topsep}}{\vspace{\topsep}}
+
+
+\author{Caitlin McHugh$^{1,2*}$, Jason Hackney$^1$, and Jessica L. Larson$^1$ \\
+	[1em] \small{$^{1}$ Department of Bioinformatics and Computational Biology, Genentech, Inc.} \\ 
+	\small{$^{2}$ Department of Biostatistics, University of Washington} \\ 
+	\small{\texttt{$^*$mchughc (at) uw.edu}}}
+
+\title{Combining SNP P-Values in Gene Sets: the cpvSNP Package}
+
+\date{\today}
+
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction }
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Genome-wide association studies (GWAS) have lead to the discovery of many disease-associated single 
+nucleotide polymorphisms (SNPs).  Researchers are often interested in extending these studies to 
+determine the genetic association of a given pathway (i.e., a gene set) 
+with a certain phenotype.  Gene set methods allow users to combine SNP-level association $p$-values 
+across multiple biologically related genes.
+
+The \verb@cpvSNP@ package provides code for two gene set analysis methods [1-2] and 
+accurately corrects for the correlation structure among observed SNPs. 
+Both of the implemented methods translate a set of gene 
+ids to their corresponding SNPs, and combine the $p$-values for those SNPs. 
+Calculated statistics, degrees of freedom, and corresponding $p$-values are stored for each gene set.
+
+This vignette describes a typical analysis workflow and includes some details regarding the statistical theory 
+behind \verb@cpvSNP@.  For more technical details, please see references [1] and [2].
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Example workflow for cpvSNP}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Preparing a dataset for analysis}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+For our example, we will use a set of simulated data, the \verb@geneSetAnalysis@ dataset from the \verb@cpvSNP@ package.  
+We begin by loading relevant libraries, sub-setting the data,
+and running \verb@createArrayData@ on this data set.  
+
+<<loadLibrariesAndData>>=
+library(cpvSNP)
+data(geneSetAnalysis)
+names(geneSetAnalysis)
+@
+
+The \verb@geneSetAnalysis@ list holds four elements, each of which we will need for this vignette. 
+The first object, \verb@arrayData@, is a \verb@data.frame@ containing the $p$-values, SNP ids, 
+genomic position, and chromosome of all the probes in our hypothetical GWAS. 
+Our first step is to use the \verb@cpvSNP@ function \verb@createArrayData@ to convert this \verb@data.frame@ 
+to a \verb@GRanges@ object.
+
+<<createArrayData>>=
+arrayDataGR <- createArrayData(geneSetAnalysis[["arrayData"]], 
+    positionName="Position")
+class(arrayDataGR)
+@
+
+
+The \verb@geneSetAnalysis@ list also contains a  \verb@GeneSetCollection@ with two sets of interest.  
+We can find the Entrez ids by accessing the \verb@geneIds@ slot of the \verb@GeneSetCollection@.
+<<geneSets>>=
+geneSets <- geneSetAnalysis[["geneSets"]]
+geneSets
+length(geneSets)
+head(geneIds(geneSets[[1]]))
+details(geneSets[[1]])
+head(geneIds(geneSets[[2]]))
+@
+
+Our next data formatting step is to convert the ids in our \verb@GeneSetCollection@ from Entrez gene ids to their corresponding SNP ids.  
+In this example, our SNP positions are coded in the hg19 genome build. 
+Please be careful when converting gene ids to SNPs, as mappings change between genome build updates.
+The \verb@geneToSNPList@ function requires gene transcripts stored as a \verb@GRanges@ object, along with 
+the \verb@GRanges@ object specific to our study.
+For this example, we will use the gene transcripts stored in the database \verb@TxDb.Hsapiens.UCSC.hg19.knownGene@.
+
+<<geneToSNPList>>=
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+genesHg19 <- genes(txdb)
+
+snpsGSC <- geneToSNPList(geneSets, arrayDataGR, genesHg19)
+class(snpsGSC)
+@
+
+Note that the \verb@geneToSNPList@ function has a \verb@quiet@ option defaulted to \verb@TRUE@, which 
+suppresses all warnings that may arise when finding overlaps between the genes in our collection and our study SNPs.
+The default is set to \verb@TRUE@ because there are often warnings that are usually not an issue. 
+However, please be aware that valid warnings may also be suppressed
+if the \verb@quiet@ option is set to \verb@TRUE@.
+
+We now have the two input files required to run GLOSSI [1] and VEGAS [2]: a \verb@GRanges@ object for the SNPs in our GWAS, and 
+a \verb@GeneSetCollection@ with SNP ids for each gene in each set.
+
+<<readyToRun>>=
+arrayDataGR
+snpsGSC
+@
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Running GLOSSI}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+An assumption of GLOSSI [1] is that our SNPs (and thus $p$-values) are independent.  In order to run \verb@glossi@, 
+we must subset our \verb@arrayDataGR@ $p$-values to those from independent SNPs.
+
+In the \verb@geneSetAnalysis@ list, we have included a 
+vector of independent SNPs from our GWAS experiment. 
+This list was created using a standard `LD-pruning' method from the PLINK software [3].
+
+<<indep>>=
+indep <- geneSetAnalysis[["indepSNPs"]]
+head(indep)
+dim(indep)
+@
+
+We now subset \verb@arrayDataGR@ to contain only independent SNPs, and create a new vector of 
+$p$-values with names corresponding to these independent SNPs.
+<<createIndepP>>=
+pvals <- arrayDataGR$P[is.element(arrayDataGR$SNP, indep$V1)]
+names(pvals) <- arrayDataGR$SNP[is.element(arrayDataGR$SNP, indep$V1)]
+head(pvals)
+@
+
+We now have the proper input to call \verb@glossi@. 
+We can consider all gene sets in our \verb@GeneSetCollection@, or call \verb@glossi@ on a just some of the sets.
+Accessor functions for the resulting \verb@GLOSSIResultCollection@ allow us to view the results.
+
+<<glossi>>=
+gRes <- glossi(pvals, snpsGSC)
+gRes
+
+gRes2 <- glossi(pvals, snpsGSC[[1]])
+gRes2
+
+pValue(gRes)
+degreesOfFreedom(gRes)
+statistic(gRes)
+@
+
+Using the \verb@ReportingTools@ package, we can publish 
+these results to a HTML page for exploration.  We first adjust for multiple testing.
+<<publishMultiple, eval=FALSE >>=
+pvals <- p.adjust( unlist( pValue(gRes) ), method= "BH" )
+library(ReportingTools)
+report <- HTMLReport (shortName = "cpvSNP_glossiResult",
+        title = "GLOSSI Results", reportDirectory = "./reports")
+publish(geneSets, report, annotation.db = "org.Hs.eg",
+        setStats = unlist(statistic (gRes)), 
+        setPValues = pvals)
+finish(report)
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Running VEGAS}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Unlike GLOSSI, which requires SNPs and $p$-values to be independent, VEGAS [2] accounts for correlation 
+among SNPs and corresponding $p$-values.
+We thus need a matrix of correlation values for each SNP in our GWAS. Most commonly, this correlation matrix 
+holds linkage disequilibrium (LD) values.
+Many R packages and online tools exist to calculate an LD matrix for observed raw data. 
+
+Here, we briefly show how to calculate an LD matrix for chromosome 1 using the publicly available HapMap data, 
+the R package \verb@snpStats@, and the PLINK software package [3].
+This requires downloading PLINK file formatted data, extracting the probes on chromosome 1, and 
+then calculating LD among SNPs in the \verb@snpsGSC@ elements.
+<<hapmap, eval=FALSE>>=
+download.file(
+    url="http://hapmap.ncbi.nlm.nih.gov/genotypes/hapmap3_r3/plink_format/hapmap3_r3_b36_fwd.consensus.qc.poly.ped.gz",
+    destfile="hapmap3_r3_b36_fwd.consensus.qc.poly.ped.gz")
+download.file(
+    url="http://hapmap.ncbi.nlm.nih.gov/genotypes/hapmap3_r3/plink_format/hapmap3_r3_b36_fwd.consensus.qc.poly.map.gz",
+    destfile="hapmap3_r3_b36_fwd.consensus.qc.poly.map.gz")
+system("gunzip hapmap3_r3_b36_fwd.consensus.qc.poly.ped.gz")
+system("gunzip hapmap3_r3_b36_fwd.consensus.qc.poly.map.gz")
+system("plink --file hapmap3_r3_b36_fwd.consensus.qc.poly --make-bed --chr 1")
+
+genos <- read.plink(bed, bim, fam)
+genos$genotypes
+head(genos$map)
+x <- genos[,is.element(genos$map$snp.name,c(geneIds(snpsGSC[[2]])))]
+ldMat <- ld(x,y=x,stats="R.squared")
+@
+
+We have performed these steps already, and can simply use the LD matrix included in our \verb@geneSetAnalysis@ list, \verb@ldMat@ 
+to call \verb@vegas@.  Note that the \verb@vegas@ method calculates simulated statistics (see Methods section below for more details).
+<<vegas>>=
+ldMat <- geneSetAnalysis[["ldMat"]]
+vRes <- vegas(snpsGSC[1], arrayDataGR, ldMat)
+vRes
+summary(unlist(simulatedStats(vRes)))
+
+pValue(vRes)
+degreesOfFreedom(vRes)
+statistic(vRes)
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Visualizing Results}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+There are two plotting functions available in \verb@cpvSNP@ to visualize the results 
+from the GLOSSI and VEGAS methods.
+
+The \verb@plotPvals@ function plots the calculated $p$-values against the number of SNPs in each gene set, 
+for each set in the original \verb@GeneSetCollection@and \verb@GLOSSIResultCollection@.
+In this vignette we have only analyzed two gene sets, so this plot is not very informative.
+The plot is included simply to demonstrate the plotting functions available in the \verb@cpvSNP@ package.
+<<plotb, fig=TRUE>>=
+plotPvals(gRes, main="GLOSSI P-values")
+@
+
+\begin{figure}
+\centering
+\includegraphics{cpvSNP-plotb}
+\caption{The number of SNPs per gene set versus the $p$-value, for the GLOSSI methods.}
+\end{figure}
+
+The \verb@assocPvalBySetPlot@ function plots the GWAS $p$-values for each SNP in the original association study, 
+as well as those for SNPs in a particular gene set.
+This visualization enables an easy comparison of the $p$-values within a particular gene set to all $p$-values from our GWAS.  
+Gene sets that are highly associated with the phenotype of interest will have a different distribution than all SNPs in our study.
+<<plot2, fig=TRUE>>=
+pvals <- arrayDataGR$P
+names(pvals) <- arrayDataGR$SNP
+assocPvalBySetPlot(pvals, snpsGSC[[2]])
+@
+
+\begin{figure}
+\centering
+\includegraphics{cpvSNP-plot2}
+\caption{Density plots of all $p$-values, overlaid in red with $p$-values from the second gene set.}
+\end{figure}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Methods in brief}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{GLOSSI methods}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+The GLOSSI [1] method assumes that our $p$-values are independently distributed. 
+Define $J$ to be the total number of \textit{independent} SNPs for which we have association $p$-values, 
+such that each locus $j$ has a corresponding $p$-value, $p_j$, $j \in \{1,\dots,J\}$. For this vignette, $J=302$.
+Let $K$ be the total number of loci sets in which we are interested. For the example used in this vignette, $K=2$.
+
+We begin by defining an indicator variable $g$ for each loci set $k$ and for each locus $j$, such that
+$$
+g_{jk}=\begin{cases} 1, &\mbox{if } j^{th} \mbox{ locus is in }k^{th} \mbox{ set }\\
+0, & \mbox{otherwise} \end{cases}
+$$
+
+Note the sum of $g_{jk}$ is the size of loci-set $k$
+\begin{equation*}
+n_k = \sum_{j=1}^J g_{jk}
+\end{equation*}
+
+Our statistic for each loci-set $k$ is defined as
+\begin{equation*}
+S_{k_{obs}}= -2 \sum_{j=1}^J g_{jk} log(p_j)
+\end{equation*}
+
+We know from Fisher's transformation that if the $p_j \overset{iid}{\sim} Unif(0,1)$ then $S_{k_{obs}} \sim \chi_{2n_k}^2$. 
+Thus, to calculate the corresponding $p$-value for loci-set $k$, we simply use the corresponding $\chi^2$ distribution for each set. 
+Note the degrees of freedom in the null distribution takes into account the size of the loci-set, $n_k$.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{VEGAS methods}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+The VEGAS [2] method does not require independent SNPs, but rather a matrix of correlation values among the SNPs being considered. 
+These correlation values can be correlation coefficients, a composite LD measure, or similar. 
+We denote the correlation matrix for a particular loci-set $k$ as $\Sigma_k$, where each row and column corresponds to a SNP in $k$. 
+This matrix must be square, symmetric, and have values of $1$ on the diagonal. 
+
+To calculate a $p$-value for loci-set $k$ that takes into account the correlation structure, we begin by simulating a vector $z\sim N(0,1)$ with length $n_k$. 
+We take the Cholesky decomposition of $\Sigma_k$ and multiply this by $z$ to define a Multivariate Normal random variable $z' \sim MVN(0,\Sigma_k)$. 
+To define a statistic from this null distribution that now has the same correlation structure as our observed data, we calculate
+\begin{equation*}
+S_k = \sum_{i=1}^{n_k} [z_i chol(\Sigma_k)]^2
+\end{equation*}
+We simulate the vector $z$ a total of $n_{sims}$ times. 
+We calculate the observed $p$-value as 
+\begin{equation*}
+\frac{\#(S_k>S_{k_{obs}})+1}{(n_{sims}+1)}.
+\end{equation*}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Session Info}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+<<sessInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+@
+
+<<resetOptions, echo=FALSE>>=
+options(prompt="> ", continue="+ ")
+@ 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{References}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+1. Chai, High-Seng and Sicotte, Hughes et al. 
+GLOSSI: a method to assess the association of genetic loci-sets with complex diseases.
+BMC Bioinformatics, 2009.
+
+2. Liu, Jimmy Z. and Mcrae, Allan F. et al. 
+A Versatile Gene-Based Test for Genome-Wide Association Studies.
+The American Journal of Human Genetics, 2010.
+
+3. Purcell S., Neale B., and Sham P.C. et al. 
+        PLINK: a toolset for whole-genome association and population-based 
+	linkage analysis. American Journal of Human Genetics, 2007.
+
+\end{document}
