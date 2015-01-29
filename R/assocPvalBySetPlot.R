@@ -53,9 +53,9 @@ assocPvalBySetPlot <- function(pvals, set, title="",
     data <- list("main" = -log10(pvals+1e-09), 
         "geneSet" = -log10(setStats+1e-09))
     ## data is a list of numerical vectors: 'main', 'geneSet'
-    dens <- bplapply(data , function(x) if( length( x ) > 1 ){
+    dens <- bplapply(data , function(x) { if( length( x ) > 1 ){
         density( x, na.rm = TRUE )
-	} else { NULL })
+	} else { NULL } } )
     if(is.null(xlim)) {
         xlim <- range(sapply(dens, function(x) {
 	    if(!is.null(x)) { range(x$x, na.rm = TRUE) }
