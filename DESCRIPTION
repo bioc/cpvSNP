@@ -2,7 +2,7 @@ Package: cpvSNP
 Type: Package
 Title: Gene set analysis methods for SNP association p-values that lie
         in genes in given gene sets
-Version: 0.99.3
+Version: 0.99.
 Date: 2014-11-20
 Author: Caitlin McHugh, Jessica Larson, and Jason Hackney
 Maintainer: Caitlin McHugh <mchughc@uw.edu>
