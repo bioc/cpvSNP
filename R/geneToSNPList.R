@@ -39,12 +39,19 @@ geneToSNPList <- function(geneList, arrayData, genes,
 
     # this transforms the elements of the split from indices to the snp at 
         # that index
-    spl2 <- bplapply(spl,function(x, arrayData) arrayData$SNP[x], arrayData=arrayData)
+    spl2 <- bplapply(spl, 
+                     function(x, arrayData) { arrayData$SNP[x] }, 
+                     arrayData=arrayData
+            )
 
     # this creates a gene set collection object that maps identifiers from 
     # the geneList to the AnnotationIdentifier() from the spl2 list 
-    snp.gsc <- GeneSetCollection(bplapply(geneList,mapIdentifiers, 
-        AnnotationIdentifier(), as.environment(spl2)))
+    snp.gsc <- 
+        GeneSetCollection(bplapply(geneList, 
+            function(what, to, from, ...) {
+                library(GSEABase)
+                mapIdentifiers(what, to, from, ...)
+            }, to=AnnotationIdentifier(), from=as.environment(spl2)))
     
     return(snp.gsc)
 }

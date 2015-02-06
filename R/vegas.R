@@ -88,9 +88,16 @@ vegas <- function(set, assoc_table, ldMatrix, num_sims=1000,
     
     if(is(set)[1]=="GeneSetCollection"){
     # loop through the gene sets, get the analysis results
-        res <- bplapply(set,vegasPrep,assoc_table=assoc_table,
-            ldMatrix=ldMatrix,num_sims=num_sims,
-	        correction=correction,seed=seed,verbose=verbose)
+        res <- bplapply(set,
+                   function(set, assoc_table, ldMatrix, num_sims, correction,
+                            seed, verbose) 
+                   {
+                       library(cpvSNP)
+                       vegasPrep(set, assoc_table, ldMatrix, num_sims,
+                                 correction, seed, verbose)
+                   }, assoc_table=assoc_table, ldMatrix=ldMatrix,
+                   num_sims=num_sims, correction=correction, seed=seed,
+                   verbose=verbose)
 	    return(new("VEGASResultCollection", res))
     }else{
     	res <- vegasPrep(set,assoc_table=assoc_table,
