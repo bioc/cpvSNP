@@ -219,7 +219,7 @@ ldMat <- ld(x,y=x,stats="R.squared")
 
 We have performed these steps already, and can simply use the LD matrix included in our \verb@geneSetAnalysis@ list, \verb@ldMat@ 
 to call \verb@vegas@.  Note that the \verb@vegas@ method calculates simulated statistics (see Methods section below for more details).
-<<vegas>>=
+<<vegas, eval=FALSE>>=
 ldMat <- geneSetAnalysis[["ldMat"]]
 vRes <- vegas(snpsGSC[1], arrayDataGR, ldMat)
 vRes
